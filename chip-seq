@@ -1,0 +1,108 @@
+#H3K4me3EL
+#annotation for peaks
+time \
+for type in N T
+do
+        ls ${type}/ | grep broadPeak$ | while read id
+        do
+            input_macs2_peak=${type}/${id}
+            output_annotation=../$(date -I)_macs2_peak_annotation/${id}_annotation
+            output_log=../00log/$(date -I)/macs2_peak_annotation.log
+                annotatePeaks.pl  ${input_macs2_peak} hg19 1>${output_annotation} 2>>${output_log}
+        done &
+done
+
+#featurecount
+for type in N T
+do
+        time
+        ls |grep  ^[1-9].*.SAF$ | while read id; do
+        input_bam=../02bam/${type}/${type}${id%-H3K4me3EL*}-H3K27ac_rmdup.bam
+        input_SAF=${id}
+        output_count=../_H3K4me3EL_featurecount/${id%-H3K4me3EL*}_${type}_H3K4me3EL_featurecount
+        featureCounts -F SAF \
+        -T 5 -p \
+        -a ${input_SAF} \
+        ${input_bam} \
+        -o  ${output_count} 2>>../00log/${type}_featurecount.log;done &
+done
+
+#RPM normalize
+sample_number=(10 16 17 18 19 1 23 26 27 28 29 2 30 31 32 33 34 35 36 37 38 39 3 40 41 42 43 44 45 46 47 48 49 4 5 6 7 8 9)
+for ((i=0; i <= 38; i++))
+do
+    cd ../04flagstat/
+    number=${sample_number[$i]}
+    echo $number
+    sample_name_featurecount=../_H3K4me3EL_featurecount/${number}"_H3K4me3EL_featurecount"
+    #N_count=`ls ../04flagstat| grep ^[N]${number}-H3K27ac| xargs cat| grep -e 'mapped (' |awk '{print $1}'`
+    N_count=`ls ../04flagstat| grep ^[N]${number}-H3K27ac|  xargs cat | grep 'paired ('| awk '{print $1}'`
+    #T_count=`ls ../04flagstat| grep ^[T]${number}-H3K27ac| xargs cat| grep -e 'mapped (' |awk '{print $1}'`
+    T_count=`ls ../04flagstat| grep ^[T]${number}-H3K27ac| xargs cat | grep 'paired (' | awk '{print $1}'`
+    echo $sample_name_featurecount
+    echo $N_count $T_count
+    export N_count T_count #方便awk调用
+    awk  'BEGIN{FS="\t";OFS="\t"; print "peakid","chr","start","end","strand","N_featurecount","T_featurecount","N_mapping_count","T_mapping_count"} {print $0,ENVIRON["N_count"],ENVIRON["T_count"]}' $sample_name_featurecount 1> ../2021-11-25_H3K4me3EL_RPM/${number}"_H3K4me3EL_featurecount_mapping"
+done
+
+## Aim: append mapping count to individual_VH3K4me3EL_featurecount;last col is mapping_count;
+sample_number=(10 16 17 18 19 1 23 26 27 28 29 2 30 31 32 33 34 35 36 37 38 39 3 40 41 42 43 44 45 46 47 48 49 4 5 6 7 8 9)
+for ((i=0; i <= 38; i++))
+do
+        cd /data1/chenjidong2/project_crc/chip-seq/result/*individual_VH3K4me3EL_RPM
+    number=${sample_number[$i]}
+#               echo $number
+        sample_type=("T" "N")
+        for s_type in ${sample_type[@]}
+        do
+                vary_type=("gained" "lost")
+                for v_type in ${vary_type[@]}
+                do
+                        sample_name_featurecount=../_individual_VH3K4me3EL_featurecount/${s_type}${number}-"H3K27ac_VH3K4me3EL_all_individual_only_"${v_type}"_featurecount"
+                        if [ "${s_type}" == "N" ]; then
+                                N_mapping_count_name=`ls ../04flagstat/ |grep ^[N]${number}-H3K27ac`
+                                N_mapping_count=`cat ../04flagstat/${N_mapping_count_name} | grep 'paired (' | awk '{print $1}'`
+                                export N_mapping_count #方便awk调用
+                                awk -F "\t" 'BEGIN{OFS="\t"; print "featurecount","mapping_count"} {print $0,ENVIRON["N_mapping_count"]}' $sample_name_featurecount 1>${s_type}${number}"_"${v_type}"_featurecount_mapping"
+                        else
+                T_mapping_count_name=`ls ../04flagstat/ |grep ^[T]${number}-H3K27ac`
+                T_mapping_count=`cat ../04flagstat/${T_mapping_count_name} | grep 'paired (' | awk '{print $1}'`
+                                export T_mapping_count #方便awk调用
+                                awk -F "\t" 'BEGIN{OFS="\t"; print "featurecount","mapping_count"} {print $0,ENVIRON["T_mapping_count"]}' $sample_name_featurecount 1>${s_type}${number}"_"${v_type}"_featurecount_mapping"
+                        fi
+                        echo $number
+                        echo $sample_name_featurecount
+                        echo $N_mapping_count
+                        echo $N_mapping_count_name
+                        echo $T_mapping_count
+                        echo $T_mapping_count_name
+                done
+        done
+done
+
+##computematrix
+nohup
+for type in T N
+do
+        ls ../02bam/${type}/| grep bw$ | grep -v -e 20 -e 24 | while read id
+        do
+        for vary_type in gained lost
+        do
+                input_bed3=all_significant_${vary_type}_VH3K4me3EL_bed3.txt
+            input_bw=../02bam/${type}/${id}
+                output_matrix=../_significant_VH3K4me3EL_density/significant_${vary_type}_VH3K4me3EL_density_${id%_rmdup.bam.bw*}.gz
+                output_bed=../_significant_VH3K4me3EL_density/significant_${vary_type}_VH3K4me3EL_density_${id%_rmdup.bam.bw*}.bed
+            computeMatrix reference-point \
+            --referencePoint center \
+            -bs 20 \
+            -b 5000 -a 5000 \
+            -R ${input_bed3} \
+            -S ${input_bw}  \
+            --skipZeros \
+            -o ${output_matrix} \
+            --outFileSortedRegions ${output_bed} \
+            -p 20
+        done
+        done &
+done &
+  
